@@ -1,0 +1,11 @@
+Patient_ID,Age,Gender,Stage_TNM,Tumor_Size_cm,Recurrence,Treatment_Type,Response_to_Treatment,Smoking_Status,Alcohol_Use,Oral_Hygiene,HPV_Status,Comorbidities,Follow_Up_Month
+A001,65,Male,T4aN2bM0,4.8,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",1
+A001,65,Male,T4aN2bM0,5.0,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",2
+A001,65,Male,T4aN2bM0,5.1,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",3
+A001,65,Male,T4aN2bM0,5.4,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",4
+A001,65,Male,T4aN2bM0,5.5,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",5
+A001,65,Male,T4aN2bM0,5.8,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",6
+A001,65,Male,T4aN2bM0,6.0,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",7
+A001,65,Male,T4aN2bM0,6.1,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",8
+A001,65,Male,T4aN2bM0,6.4,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",9
+A001,65,Male,T4aN2bM0,6.7,Yes,Surgery+Chemo+RT,Poor,Current Smoker,Heavy Daily,Poor,Negative,"Diabetes, Hypertension",10

@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts'
 import { Upload, Activity, User, Settings, MessageSquare, FileText, TrendingUp, AlertCircle, Heart, Pill, MapPin } from 'lucide-react'
+import TumorEvolutionVisualization from './components/TumorEvolutionVisualization'
 
 const TumorPredictor = () => {
+  // Optional: Set a specific histology progression image path here
+  // Leave as null to use uploaded images instead
+  const HISTOLOGY_PROGRESSION_IMAGE = 'http://localhost:8000/data/uploads/images/histology.jpg' // Path to the histology image on the server
+  
   const [activeTab, setActiveTab] = useState('dashboard')
   const [patientData, setPatientData] = useState(null)
   const [predictions, setPredictions] = useState(null)
@@ -118,6 +123,13 @@ const TumorPredictor = () => {
     }
   }
 
+  // Clear upload status on mount (handles page refresh)
+  useEffect(() => {
+    setCsvUploadStatus(null)
+    setImageUploadStatus(null)
+    setImagePreviewUrls([])
+  }, [])
+
   // Auto-load default predictions and database patients
   useEffect(() => {
     const loadDefault = async () => {
@@ -127,6 +139,7 @@ const TumorPredictor = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ treatment: 'chemo' }),
         })
+        if (!predRes.ok) throw new Error('Backend not available')
         const predJson = await predRes.json()
         setPredictions(predJson)
         
@@ -139,7 +152,8 @@ const TumorPredictor = () => {
           await fetchUserDashboard(currentUser.user_id)
         }
       } catch (err) {
-        console.error(err)
+        // Silently fail on initial load - backend might not be running yet
+        console.log('Backend not available on initial load (this is OK)')
       }
     }
     if (!predictions) loadDefault()
@@ -203,9 +217,9 @@ const TumorPredictor = () => {
   const generatePredictions = (treatment = 'chemo') => {
     const baseGrowth = treatment === 'chemo' ? -0.15 : treatment === 'radiation' ? -0.12 : -0.18
     const data = []
-    for (let month = 0; month <= 12; month++) {
-      const size = 2.3 * Math.exp(baseGrowth * month)
-      const survival = 100 - month * 2 + (treatment === 'combined' ? 5 : 0)
+    for (let month = 1; month <= 12; month++) {
+      const size = 2.3 * Math.exp(baseGrowth * (month - 1))
+      const survival = 100 - (month - 1) * 2 + (treatment === 'combined' ? 5 : 0)
       data.push({
         month: `Month ${month}`,
         tumorSize: Number(Math.max(0.1, size).toFixed(2)),
@@ -259,6 +273,114 @@ const TumorPredictor = () => {
   const [uploadedCsvPath, setUploadedCsvPath] = useState(null)
   const [csvUploadStatus, setCsvUploadStatus] = useState(null)
   const [csvUploaded, setCsvUploaded] = useState(false)
+  const [uploadedPatientInfo, setUploadedPatientInfo] = useState({ csvFileName: null, imageFileNames: [] })
+  const [csvTumorSize, setCsvTumorSize] = useState(null)
+  const [csvFileContent, setCsvFileContent] = useState(null)
+
+  // Medication plans per treatment for report rendering (baseline doses)
+  const medicationPlans = {
+    chemo: [
+      { name: 'Cisplatin', baseDoses: 3, schedule: 'q3wk', rationale: 'Cytotoxic agent; primary systemic therapy for locoregional control.' },
+      { name: 'Ondansetron', baseDoses: 6, schedule: '', rationale: '5-HT3 antagonist for chemotherapy‑induced nausea/vomiting prophylaxis.' },
+      { name: 'Dexamethasone', baseDoses: 6, schedule: '', rationale: 'Adjunct antiemetic; reduces peritumoral/therapy‑related edema.' },
+    ],
+    radiation: [
+      { name: 'Benzydamine mouthwash', baseDoses: 28, schedule: '', rationale: 'Topical anti‑inflammatory; mucositis prophylaxis during radiotherapy.' },
+      { name: 'Paracetamol', baseDoses: 20, schedule: '', rationale: 'Analgesia for odynophagia/oral pain without antiplatelet effect.' },
+      { name: 'Chlorhexidine 0.12%', baseDoses: 28, schedule: '', rationale: 'Antimicrobial oral rinse to reduce secondary infection risk.' },
+    ],
+    combined: [
+      { name: 'Cisplatin (weekly)', baseDoses: 6, schedule: 'weekly', rationale: 'Radiosensitizing chemotherapy to enhance local control.' },
+      { name: 'Ondansetron', baseDoses: 12, schedule: '', rationale: 'Antiemetic prophylaxis for concurrent chemoradiation.' },
+      { name: 'Dexamethasone', baseDoses: 12, schedule: '', rationale: 'Adjunct antiemetic and edema control during CRT.' },
+      { name: 'Benzydamine mouthwash', baseDoses: 28, schedule: '', rationale: 'Mucositis prophylaxis during radiation exposure.' },
+      { name: 'Paracetamol', baseDoses: 20, schedule: '', rationale: 'Analgesic for treatment‑related pain.' },
+      { name: 'Chlorhexidine 0.12%', baseDoses: 28, schedule: '', rationale: 'Oral antisepsis to limit superinfection.' },
+    ],
+  }
+
+  // Determine recommended dosage frequency based on stage and recent progression
+  const getDosageFrequency = () => {
+    try {
+      const stageStr = (selectedPatientDetails?.patient?.stage_tnm || predictions?.stage || '').toUpperCase()
+      const stageHigh = /(T3|T4|N1|N2|N3|M1)/.test(stageStr)
+
+      const overallRisk = (selectedPatientDetails?.risk_assessment?.overall_risk || '').toLowerCase()
+      const riskHigh = overallRisk === 'high'
+
+      const evo = predictions?.evolution || []
+      let growthPositive = false
+      if (evo.length >= 3) {
+        const a = evo[evo.length - 3].tumorSize
+        const b = evo[evo.length - 2].tumorSize
+        const c = evo[evo.length - 1].tumorSize
+        // Simple trend: any recent increase suggests progression
+        growthPositive = (c - b) > 0 || (b - a) > 0
+      }
+
+      return (stageHigh || riskHigh || growthPositive) ? 'daily' : 'weekly'
+    } catch (e) {
+      return 'weekly'
+    }
+  }
+
+  // Determine growth severity from latest prediction trend
+  const getGrowthSeverity = () => {
+    const evo = predictions?.evolution || []
+    if (evo.length < 3) return 'medium'
+    const a = evo[evo.length - 3].tumorSize
+    const b = evo[evo.length - 2].tumorSize
+    const c = evo[evo.length - 1].tumorSize
+    const avgMonthlyChange = ((c - b) + (b - a)) / 2
+    if (avgMonthlyChange > 0.1) return 'high'
+    if (avgMonthlyChange > 0) return 'medium'
+    return 'low'
+  }
+
+  // Adjust dose count based on predicted evolution severity
+  const getAdjustedDoseString = (med) => {
+    const severity = getGrowthSeverity()
+    let multiplier = 1.0
+    if (severity === 'high') multiplier = 1.3
+    else if (severity === 'low') multiplier = 0.85
+    const adjusted = Math.max(1, Math.round((med.baseDoses || 1) * multiplier))
+    const scheduleNote = med.schedule ? ` (${med.schedule})` : ''
+    return `${adjusted} doses${scheduleNote}`
+  }
+
+  // Determine best treatment option based on risk assessment
+  const getRecommendedTreatment = () => {
+    try {
+      const stageStr = (selectedPatientDetails?.patient?.stage_tnm || predictions?.stage || '').toUpperCase()
+      const stageHigh = /(T3|T4|N1|N2|N3|M1)/.test(stageStr)
+      
+      const overallRisk = (selectedPatientDetails?.risk_assessment?.overall_risk || '').toLowerCase()
+      const riskHigh = overallRisk === 'high'
+      const riskMedium = overallRisk === 'medium'
+      
+      const evo = predictions?.evolution || []
+      let growthPositive = false
+      if (evo.length >= 3) {
+        const a = evo[evo.length - 3].tumorSize
+        const b = evo[evo.length - 2].tumorSize
+        const c = evo[evo.length - 1].tumorSize
+        growthPositive = (c - b) > 0 || (b - a) > 0
+      }
+      
+      // High risk: Combined therapy (most aggressive)
+      // Medium risk: Chemotherapy (moderate)
+      // Low risk: Radiation (less invasive)
+      if (stageHigh || riskHigh || growthPositive) {
+        return 'combined'
+      } else if (riskMedium || stageStr.includes('T2')) {
+        return 'chemo'
+      } else {
+        return 'radiation'
+      }
+    } catch (e) {
+      return 'chemo' // Default fallback
+    }
+  }
 
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files || [])
@@ -287,16 +409,25 @@ const TumorPredictor = () => {
         if (uploaded === 0) throw new Error('Image upload failed')
         setImageUploadStatus(`Uploaded ${uploaded} image(s)`) 
         setImageUploadedCount(uploaded)
+        // For single upload fallback, we need to get paths - use filenames as paths
+        const fallbackPaths = files.map(f => `data/uploads/images/${f.name}`)
+        setUploadedImagePaths(fallbackPaths)
+        setUploadedPatientInfo(prev => ({ ...prev, imageFileNames: files.map(f => f.name) }))
         return
       }
       const json = await res.json()
+      const imagePaths = (json.files || []).map(f => f.path)
       setImageUploadStatus(`Uploaded ${json.count} image(s)`) 
       setImageUploadedCount(json.count || files.length)
-      setUploadedImagePaths((json.files || []).map(f => f.path))
+      setUploadedImagePaths(imagePaths)
+      setUploadedPatientInfo(prev => ({ ...prev, imageFileNames: files.map(f => f.name) }))
     } catch (err) {
-      console.error(err)
-      setImageUploadStatus('Upload failed')
-      alert('Failed to upload image. Ensure backend is running on port 8000.')
+      console.error('Image upload error:', err)
+      if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+        setImageUploadStatus('Upload failed - Backend not reachable. Please start the backend server on port 8000.')
+      } else {
+        setImageUploadStatus(`Upload failed: ${err.message}`)
+      }
     }
   }
 
@@ -305,21 +436,107 @@ const TumorPredictor = () => {
     if (!file) return
     try {
       setCsvUploadStatus('Uploading...')
+      
+      // Read file content first to extract tumor size
+      const fileContent = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (e) => resolve(e.target.result)
+        reader.onerror = reject
+        reader.readAsText(file)
+      })
+      
+      // Store CSV content for visualization
+      setCsvFileContent(fileContent)
+      
+      // Extract tumor size from CSV file
+      try {
+        const lines = fileContent.split('\n').filter(line => line.trim())
+        if (lines.length > 1) {
+          const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
+          const tumorSizeColIndex = headers.findIndex(h => 
+            (h.includes('tumor') && h.includes('size')) || 
+            h === 'tumor_size_cm' || 
+            h === 'tumor size' ||
+            h === 'tumorsize'
+          )
+          
+          // Check for month column to find month 1 value
+          const monthColIndex = headers.findIndex(h => 
+            h.includes('month') || 
+            h === 'month_index' ||
+            h === 'follow_up_month'
+          )
+          
+          if (tumorSizeColIndex !== -1) {
+            let initialTumorSize = null
+            
+            // First, try to find month 1 if month column exists
+            if (monthColIndex !== -1) {
+              for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim())
+                const monthValue = values[monthColIndex]
+                const sizeValue = values[tumorSizeColIndex]
+                
+                if (monthValue && sizeValue) {
+                  const month = parseFloat(monthValue)
+                  const size = parseFloat(sizeValue)
+                  if (!isNaN(month) && !isNaN(size) && (month === 1 || month === 0)) {
+                    initialTumorSize = size
+                    break
+                  }
+                }
+              }
+            }
+            
+            // If month 1 not found, use first row with valid data
+            if (initialTumorSize === null) {
+              for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim())
+                if (values[tumorSizeColIndex]) {
+                  const size = parseFloat(values[tumorSizeColIndex])
+                  if (!isNaN(size)) {
+                    initialTumorSize = size
+                    break
+                  }
+                }
+              }
+            }
+            
+            if (initialTumorSize !== null) {
+              setCsvTumorSize(initialTumorSize)
+            }
+          }
+        }
+      } catch (parseErr) {
+        console.log('Could not parse CSV for tumor size:', parseErr)
+      }
+      
+      // Now upload the file
       const form = new FormData()
       form.append('file', file)
+      
       const ingestRes = await fetch('http://localhost:8000/ingest', {
         method: 'POST',
         body: form,
       })
-      if (!ingestRes.ok) throw new Error('Upload failed')
+      
+      if (!ingestRes.ok) {
+        const errorText = await ingestRes.text()
+        throw new Error(`Upload failed: ${ingestRes.status} - ${errorText}`)
+      }
+      
       const json = await ingestRes.json()
       setCsvUploadStatus(`Uploaded ${file.name} (${json.rows} rows)`) 
       setUploadedCsvPath(json.path)
       setCsvUploaded(true)
+      setUploadedPatientInfo(prev => ({ ...prev, csvFileName: file.name }))
     } catch (err) {
-      console.error(err)
-      setCsvUploadStatus('Upload failed')
-      alert('Failed to process CSV. Ensure backend is running on port 8000.')
+      console.error('CSV upload error:', err)
+      if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+        setCsvUploadStatus('Upload failed - Backend not reachable. Please start the backend server on port 8000.')
+      } else {
+        setCsvUploadStatus(`Upload failed: ${err.message}`)
+      }
     }
   }
 
@@ -337,7 +554,8 @@ const TumorPredictor = () => {
       setPatientData(samplePatient)
     } catch (err) {
       console.error(err)
-      alert('Failed to start analysis. Is backend running?')
+      // Show error in console, user can see status messages
+      console.error('Analysis failed - check if backend is running')
     }
   }
 
@@ -409,70 +627,9 @@ const TumorPredictor = () => {
         </div>
       )}
 
-      {/* User Statistics */}
-      {userDashboard && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">My Patients</p>
-                <p className="text-2xl font-bold text-gray-800">{userDashboard.statistics.total_patients}</p>
-              </div>
-              <User className="text-blue-600" size={32} />
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Recent Predictions</p>
-                <p className="text-2xl font-bold text-gray-800">{userDashboard.statistics.recent_predictions}</p>
-              </div>
-              <TrendingUp className="text-green-600" size={32} />
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-purple-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Treatment Success</p>
-                <p className="text-2xl font-bold text-gray-800">
-                  {Object.keys(userDashboard.statistics.treatment_effectiveness).length > 0 
-                    ? `${Math.round(Object.values(userDashboard.statistics.treatment_effectiveness)[0]?.effectiveness || 0)}%`
-                    : 'N/A'
-                  }
-                </p>
-              </div>
-              <Activity className="text-purple-600" size={32} />
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-orange-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Role</p>
-                <p className="text-2xl font-bold text-gray-800 capitalize">{currentUser?.role || 'Doctor'}</p>
-              </div>
-              <Settings className="text-orange-600" size={32} />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* User Statistics removed as requested */}
 
-      <div className="flex justify-between">
-        <button
-          onClick={async () => {
-            try {
-              const res = await fetch('http://localhost:8000/train', { method: 'POST' })
-              if (!res.ok) throw new Error('Train failed')
-              const json = await res.json()
-              alert(`Model trained: ${json.samples || 0} samples. Click a treatment to refresh predictions.`)
-            } catch (e) {
-              console.error(e)
-              alert('Training failed. Ensure CSVs are in server/data and backend is running.')
-            }
-          }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-        >
-          Train Model
-        </button>
+      <div className="flex justify-end">
         <button
           onClick={async () => {
             try {
@@ -508,9 +665,11 @@ const TumorPredictor = () => {
             <div>
               <p className="text-sm text-gray-600">Current Size</p>
               <p className="text-2xl font-bold text-gray-800">
-                {predictions?.evolution?.length
-                  ? `${predictions.evolution[predictions.evolution.length - 1].tumorSize} cm`
-                  : '—'}
+                {csvTumorSize !== null 
+                  ? `${csvTumorSize.toFixed(2)} cm`
+                  : predictions?.evolution?.length
+                    ? `${predictions.evolution[predictions.evolution.length - 1].tumorSize} cm`
+                    : '—'}
               </p>
             </div>
             <Activity className="text-blue-600" size={32} />
@@ -550,21 +709,41 @@ const TumorPredictor = () => {
       </div>
       <div className="bg-white rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold text-gray-800 mb-4">Predicted Tumor Evolution (12 Months)</h3>
-        {predictions && (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={predictions.evolution}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" />
-              <YAxis yAxisId="left" label={{ value: 'Size (cm)', angle: -90, position: 'insideLeft' }} />
-              <YAxis yAxisId="right" orientation="right" label={{ value: 'Survival %', angle: 90, position: 'insideRight' }} />
-              <Tooltip />
-              <Legend />
-              <Line yAxisId="left" type="monotone" dataKey="tumorSize" stroke="#3b82f6" strokeWidth={2} name="Tumor Size" />
-              <Line yAxisId="right" type="monotone" dataKey="survivalProb" stroke="#10b981" strokeWidth={2} name="Survival Probability" />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
+        {predictions && (() => {
+          // Filter to show only months 1-12
+          const filteredEvolution = (predictions.evolution || []).filter(item => {
+            const monthMatch = item.month?.match(/Month (\d+)/)
+            if (monthMatch) {
+              const monthNum = parseInt(monthMatch[1])
+              return monthNum >= 1 && monthNum <= 12
+            }
+            return false
+          })
+          return filteredEvolution.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={filteredEvolution}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis yAxisId="left" label={{ value: 'Size (cm)', angle: -90, position: 'insideLeft' }} />
+                <YAxis yAxisId="right" orientation="right" label={{ value: 'Survival %', angle: 90, position: 'insideRight' }} />
+                <Tooltip />
+                <Legend />
+                <Line yAxisId="left" type="monotone" dataKey="tumorSize" stroke="#3b82f6" strokeWidth={2} name="Tumor Size" />
+                <Line yAxisId="right" type="monotone" dataKey="survivalProb" stroke="#10b981" strokeWidth={2} name="Survival Probability" />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : null
+        })()}
       </div>
+      
+      {/* Tumor Evolution Visualization */}
+      {csvFileContent && (
+        <TumorEvolutionVisualization 
+          csvData={csvFileContent} 
+          imagePaths={uploadedImagePaths}
+        />
+      )}
+      
       <div className="grid grid-cols-3 gap-4">
         {['chemo', 'radiation', 'combined'].map((t) => {
           const treatmentNames = { chemo: 'Chemotherapy', radiation: 'Radiation', combined: 'Combined Therapy' }
@@ -653,6 +832,64 @@ const TumorPredictor = () => {
                 Current survival probability at the latest time point is {predictions.evolution?.length ? `${predictions.evolution[predictions.evolution.length-1].survivalProb}%` : '—'}. Overall risk is {predictions.overallRisk || '—'} based on growth trend and follow-up data.
               </p>
             </div>
+
+            
+            
+            Tumor Histology Visualization
+            {HISTOLOGY_PROGRESSION_IMAGE ? (
+              <div className="bg-white border rounded-lg p-4 mb-6">
+                <h3 className="font-semibold text-gray-800 mb-3">Tumor Histology Progression</h3>
+                <div className="flex justify-center">
+                  <img
+                    src={HISTOLOGY_PROGRESSION_IMAGE}
+                    alt="Tumor histology progression"
+                    className="max-w-full h-auto rounded-lg shadow-md"
+                    style={{ maxHeight: '400px' }}
+                    onError={(e) => {
+                      console.error('Failed to load histology progression image')
+                      e.target.style.display = 'none'
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  Histology visualization showing tumor progression across follow-up periods
+                </p>
+              </div>
+            ) : (uploadedImagePaths && uploadedImagePaths.length > 0) && (
+              <div className="bg-white border rounded-lg p-4 mb-6">
+                <h3 className="font-semibold text-gray-800 mb-3">Tumor Histology Progression</h3>
+                <div className="flex gap-2 overflow-x-auto pb-2 justify-center">
+                  {uploadedImagePaths.map((imagePath, idx) => {
+                    const imageUrl = imagePath.startsWith('http') 
+                      ? imagePath 
+                      : imagePath.startsWith('data/')
+                      ? `http://localhost:8000/${imagePath}`
+                      : imagePath
+                    return (
+                      <div key={idx} className="flex-shrink-0">
+                        <img
+                          src={imageUrl}
+                          alt={`Histology sample ${idx + 1}`}
+                          className="w-32 h-32 object-cover rounded-full border-2 border-gray-300 shadow-md"
+                          style={{
+                            minWidth: '128px',
+                            minHeight: '128px'
+                          }}
+                          onError={(e) => {
+                            e.target.style.display = 'none'
+                          }}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  Histology samples showing tumor progression across follow-up periods
+                </p>
+              </div>
+            )}
+            
             {predictions.riskDetails && (
               <div className="bg-red-50 rounded-lg p-4 mb-6">
                 <h3 className="font-semibold text-red-900 mb-3 flex items-center">
@@ -701,6 +938,57 @@ const TumorPredictor = () => {
             <p className="text-gray-700 leading-relaxed">
               Upload a CSV and images, then click Start Analysis to generate a report.
             </p>
+          </div>
+        )}
+
+        {/* Prescribed Treatment */}
+        {predictions && (
+          <div className="bg-white border rounded-lg p-4 mt-4">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">Prescribed Treatment</h3>
+            <div className="space-y-3">
+              {[
+                { id: 'chemo', name: 'Chemotherapy', description: 'Systemic cytotoxic treatment for locoregional control and distant metastasis prevention.', effectiveness: 78 },
+                { id: 'radiation', name: 'Radiation Therapy', description: 'Focused external beam radiation for local tumor control with minimal systemic effects.', effectiveness: 74 },
+                { id: 'combined', name: 'Combined Therapy', description: 'Concurrent chemoradiation for maximum efficacy in advanced or high-risk cases.', effectiveness: 92 },
+              ].map((treatment) => {
+                const isRecommended = getRecommendedTreatment() === treatment.id
+                return (
+                  <div
+                    key={treatment.id}
+                    className={`p-4 rounded-lg border-2 transition-all ${
+                      isRecommended
+                        ? 'bg-blue-50 border-blue-500 shadow-md'
+                        : 'bg-gray-50 border-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-3">
+                        <span className={`font-semibold text-lg ${
+                          isRecommended ? 'text-blue-800' : 'text-gray-800'
+                        }`}>
+                          {treatment.name}
+                        </span>
+                        {isRecommended && (
+                          <span className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium">
+                            Recommended
+                          </span>
+                        )}
+                      </div>
+                      <span className={`text-sm font-medium ${
+                        isRecommended ? 'text-blue-700' : 'text-gray-600'
+                      }`}>
+                        {treatment.effectiveness}% effectiveness
+                      </span>
+                    </div>
+                    <p className={`text-sm ${
+                      isRecommended ? 'text-blue-700' : 'text-gray-600'
+                    }`}>
+                      {treatment.description}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -991,6 +1279,39 @@ const TumorPredictor = () => {
                 </p>
               </div>
             </div>
+            
+            {/* Uploaded Patient Data Review */}
+            {(uploadedPatientInfo.csvFileName || uploadedPatientInfo.imageFileNames.length > 0) && (
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <h4 className="text-md font-semibold text-gray-800 mb-3">Reviewed Patient Data</h4>
+                <div className="space-y-3">
+                  {uploadedPatientInfo.csvFileName && (
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">CSV File Reviewed</p>
+                          <p className="text-sm text-gray-600">{uploadedPatientInfo.csvFileName}</p>
+                        </div>
+                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium">Reviewed</span>
+                      </div>
+                    </div>
+                  )}
+                  {uploadedPatientInfo.imageFileNames.length > 0 && (
+                    <div className="bg-purple-50 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-medium text-gray-800">Image Files Reviewed</p>
+                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium">Reviewed</span>
+                      </div>
+                      <div className="space-y-1">
+                        {uploadedPatientInfo.imageFileNames.map((fileName, idx) => (
+                          <p key={idx} className="text-sm text-gray-600">• {fileName}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -1020,63 +1341,40 @@ const TumorPredictor = () => {
                 <p className="font-medium text-gray-800">15 years</p>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* User Dashboard Summary */}
-      {userDashboard && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">Dashboard Summary</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm text-gray-600">Total Patients</p>
-              <p className="text-2xl font-bold text-blue-600">{userDashboard.statistics.total_patients}</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Recent Predictions</p>
-              <p className="text-2xl font-bold text-green-600">{userDashboard.statistics.recent_predictions}</p>
-            </div>
-          </div>
-          
-          {/* Treatment Effectiveness */}
-          {userDashboard.statistics.treatment_effectiveness && Object.keys(userDashboard.statistics.treatment_effectiveness).length > 0 && (
-            <div className="mt-4">
-              <h4 className="font-medium text-gray-800 mb-2">Treatment Effectiveness</h4>
-              <div className="space-y-2">
-                {Object.entries(userDashboard.statistics.treatment_effectiveness).map(([treatment, stats]) => (
-                  <div key={treatment} className="bg-gray-50 p-3 rounded">
-                    <div className="flex justify-between items-center">
-                      <span className="font-medium">{treatment}</span>
-                      <span className="text-sm text-gray-600">{stats.effectiveness}% effective</span>
+            
+            {/* Uploaded Patient Data Review */}
+            {(uploadedPatientInfo.csvFileName || uploadedPatientInfo.imageFileNames.length > 0) && (
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <h4 className="text-md font-semibold text-gray-800 mb-3">Reviewed Patient Data</h4>
+                <div className="space-y-3">
+                  {uploadedPatientInfo.csvFileName && (
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-800">CSV File Reviewed</p>
+                          <p className="text-sm text-gray-600">{uploadedPatientInfo.csvFileName}</p>
+                        </div>
+                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium">Reviewed</span>
+                      </div>
                     </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
-                      <div 
-                        className="bg-blue-600 h-2 rounded-full" 
-                        style={{ width: `${stats.effectiveness}%` }}
-                      ></div>
+                  )}
+                  {uploadedPatientInfo.imageFileNames.length > 0 && (
+                    <div className="bg-purple-50 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-medium text-gray-800">Image Files Reviewed</p>
+                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium">Reviewed</span>
+                      </div>
+                      <div className="space-y-1">
+                        {uploadedPatientInfo.imageFileNames.map((fileName, idx) => (
+                          <p key={idx} className="text-sm text-gray-600">• {fileName}</p>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )}
+                </div>
               </div>
-            </div>
-          )}
-
-          {/* Recent Activity */}
-          {userDashboard.recent_activity && userDashboard.recent_activity.length > 0 && (
-            <div className="mt-4">
-              <h4 className="font-medium text-gray-800 mb-2">Recent Activity</h4>
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {userDashboard.recent_activity.map((activity, idx) => (
-                  <div key={idx} className="flex justify-between items-center text-sm">
-                    <span className="text-gray-600">{activity.action_type}</span>
-                    <span className="text-gray-500">{activity.patient_id}</span>
-                    <span className="text-gray-400">{new Date(activity.created_at).toLocaleDateString()}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 

@@ -43,52 +43,7 @@ const UserDashboard = ({ currentUser, userDashboard, onNavigateToProfile }) => {
         </div>
       </div>
 
-      {/* User Statistics */}
-      {userDashboard && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">My Patients</p>
-                <p className="text-2xl font-bold text-gray-800">{userDashboard.statistics?.total_patients || 0}</p>
-              </div>
-              <User className="text-blue-600" size={32} />
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Recent Predictions</p>
-                <p className="text-2xl font-bold text-gray-800">{userDashboard.statistics?.recent_predictions || 0}</p>
-              </div>
-              <TrendingUp className="text-green-600" size={32} />
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-purple-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Treatment Success</p>
-                <p className="text-2xl font-bold text-gray-800">
-                  {userDashboard.statistics?.treatment_effectiveness && Object.keys(userDashboard.statistics.treatment_effectiveness).length > 0 
-                    ? `${Math.round(Object.values(userDashboard.statistics.treatment_effectiveness)[0]?.effectiveness || 0)}%`
-                    : 'N/A'
-                  }
-                </p>
-              </div>
-              <Activity className="text-purple-600" size={32} />
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4 border-l-4 border-orange-600">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Role</p>
-                <p className="text-2xl font-bold text-gray-800 capitalize">{currentUser?.role || 'Doctor'}</p>
-              </div>
-              <Settings className="text-orange-600" size={32} />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* User Statistics removed as requested */}
 
       {/* Treatment Effectiveness Chart */}
       {userDashboard?.statistics?.treatment_effectiveness && Object.keys(userDashboard.statistics.treatment_effectiveness).length > 0 && (

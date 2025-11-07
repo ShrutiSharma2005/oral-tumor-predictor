@@ -10,7 +10,7 @@ import time
 
 def start_backend():
     """Start the backend server"""
-    print("🚀 Starting Tumor Predictor Backend...")
+    print("Starting Tumor Predictor Backend...")
     
     # Change to server directory
     server_dir = os.path.join(os.path.dirname(__file__), 'server')
@@ -23,9 +23,9 @@ def start_backend():
         print("Starting FastAPI server...")
         subprocess.run([sys.executable, "app.py"], check=True)
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error starting backend: {e}")
+        print(f"Error starting backend: {e}")
     except KeyboardInterrupt:
-        print("\n🛑 Backend stopped by user")
+        print("\nBackend stopped by user")
 
 if __name__ == "__main__":
     start_backend()

@@ -1,0 +1,11 @@
+Patient_ID,Age,Gender,Stage_TNM,Tumor_Size_cm,Recurrence,Treatment_Type,Response_to_Treatment,Smoking_Status,Alcohol_Use,Oral_Hygiene,HPV_Status,Comorbidities,Follow_Up_Month
+B001,58,Female,T2N0M0,2.8,No,Surgery+RT,Good,Non Smoker,Occasional,Good,Positive,None,1
+B001,58,Female,T2N0M0,2.6,No,Surgery+RT,Good,Non Smoker,Occasional,Good,Positive,None,2
+B001,58,Female,T2N0M0,2.5,No,Surgery+RT,Very Good,Non Smoker,Occasional,Good,Positive,None,3
+B001,58,Female,T2N0M0,2.3,No,Surgery+RT,Very Good,Non Smoker,Occasional,Good,Positive,None,4
+B001,58,Female,T2N0M0,2.1,No,Surgery+RT,Excellent,Non Smoker,Occasional,Good,Positive,None,5
+B001,58,Female,T2N0M0,1.9,No,Surgery+RT,Excellent,Non Smoker,Occasional,Good,Positive,None,6
+B001,58,Female,T2N0M0,1.8,No,Surgery+RT,Excellent,Non Smoker,Occasional,Good,Positive,None,7
+B001,58,Female,T2N0M0,1.6,No,Surgery+RT,Excellent,Non Smoker,Occasional,Good,Positive,None,8
+B001,58,Female,T2N0M0,1.4,No,Surgery+RT,Excellent,Non Smoker,Occasional,Good,Positive,None,9
+B001,58,Female,T2N0M0,1.2,No,Surgery+RT,Excellent,Non Smoker,Occasional,Good,Positive,None,10

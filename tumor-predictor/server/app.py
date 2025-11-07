@@ -7,6 +7,8 @@ from datetime import datetime
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -38,6 +40,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files directory to serve uploaded images
+app.mount("/data", StaticFiles(directory="data"), name="data")
+
 # Initialize database tables on startup
 @app.on_event("startup")
 async def startup_event():
@@ -62,26 +67,29 @@ def health():
 
 @app.post("/ingest")
 async def ingest(file: UploadFile = File(...)):
-    if not file.filename.endswith((".csv", ".CSV")):
-        raise HTTPException(status_code=400, detail="Only CSV supported")
-    content = await file.read()
-    df = pd.read_csv(io.BytesIO(content))
-    # Basic schema normalization: rename to expected keys when present
-    colmap = {
-        "Follow_Up_Month": "month_index",
-        "Tumor_Size_cm": "tumor_size_cm",
-        "Stage_TNM": "stage",
-        "Treatment_Type": "treatment_type",
-        "Response_to_Treatment": "response",
-    }
-    for k, v in colmap.items():
-        if k in df.columns:
-            df.rename(columns={k: v}, inplace=True)
-    # Cache to simple csv for demo
-    os.makedirs("data", exist_ok=True)
-    save_path = os.path.join("data", file.filename)
-    df.to_csv(save_path, index=False)
-    return {"rows": int(df.shape[0]), "path": save_path}
+    try:
+        if not file.filename or not file.filename.endswith((".csv", ".CSV")):
+            raise HTTPException(status_code=400, detail="Only CSV supported")
+        
+        # Save file first (fast) - read and write
+        os.makedirs("data", exist_ok=True)
+        save_path = os.path.join("data", file.filename)
+        
+        # Read file content
+        content = await file.read()
+        
+        # Write to disk
+        with open(save_path, "wb") as f:
+            f.write(content)
+        
+        # Quick row count
+        row_count = content.count(b'\n')
+        if row_count == 0 and len(content) > 0:
+            row_count = 1
+        
+        return {"rows": max(1, row_count), "path": save_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV: {str(e)}")
 
 
 @app.post("/image-ingest")
@@ -90,62 +98,84 @@ async def image_ingest(image: UploadFile = File(...)):
 
     For the demo, we store the image under data/uploads/images and return basic metadata.
     """
-    # Basic validation
-    allowed_ext = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
-    lower_name = image.filename.lower()
-    if not any(lower_name.endswith(ext) for ext in allowed_ext):
-        raise HTTPException(status_code=400, detail="Only image files are supported (png, jpg, jpeg, bmp, gif)")
+    try:
+        if not image.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+        
+        # Basic validation
+        allowed_ext = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
+        lower_name = image.filename.lower()
+        if not any(lower_name.endswith(ext) for ext in allowed_ext):
+            raise HTTPException(status_code=400, detail="Only image files are supported (png, jpg, jpeg, bmp, gif)")
 
-    # Ensure directory exists
-    base_dir = os.path.join("data", "uploads", "images")
-    os.makedirs(base_dir, exist_ok=True)
+        # Ensure directory exists
+        base_dir = os.path.join("data", "uploads", "images")
+        os.makedirs(base_dir, exist_ok=True)
 
-    # Save the file
-    content = await image.read()
-    save_path = os.path.join(base_dir, image.filename)
-    with open(save_path, "wb") as f:
-        f.write(content)
+        # Read and write file
+        content = await image.read()
+        save_path = os.path.join(base_dir, image.filename)
+        
+        with open(save_path, "wb") as f:
+            f.write(content)
 
-    # Lightweight metadata (no heavy processing for demo)
-    size_bytes = len(content)
-    return {
-        "message": "Image uploaded successfully",
-        "filename": image.filename,
-        "path": save_path,
-        "size_bytes": size_bytes,
-    }
+        return {
+            "message": "Image uploaded successfully",
+            "filename": image.filename,
+            "path": save_path,
+            "size_bytes": len(content),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
 
 @app.post("/image-ingest-batch")
 async def image_ingest_batch(images: List[UploadFile] = File(...)):
     """Accept multiple image uploads and persist them for later processing."""
-    if not images:
-        raise HTTPException(status_code=400, detail="No images provided")
+    try:
+        if not images:
+            raise HTTPException(status_code=400, detail="No images provided")
 
-    allowed_ext = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
-    base_dir = os.path.join("data", "uploads", "images")
-    os.makedirs(base_dir, exist_ok=True)
+        allowed_ext = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
+        base_dir = os.path.join("data", "uploads", "images")
+        os.makedirs(base_dir, exist_ok=True)
 
-    saved = []
-    for img in images:
-        lower_name = img.filename.lower()
-        if not any(lower_name.endswith(ext) for ext in allowed_ext):
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {img.filename}")
-        content = await img.read()
-        save_path = os.path.join(base_dir, img.filename)
-        with open(save_path, "wb") as f:
-            f.write(content)
-        saved.append({
-            "filename": img.filename,
-            "path": save_path,
-            "size_bytes": len(content),
-        })
+        saved = []
+        for img in images:
+            if not img.filename:
+                continue
+                
+            lower_name = img.filename.lower()
+            if not any(lower_name.endswith(ext) for ext in allowed_ext):
+                continue  # Skip invalid files instead of failing
+            
+            # Read and write file
+            content = await img.read()
+            save_path = os.path.join(base_dir, img.filename)
+            
+            with open(save_path, "wb") as f:
+                f.write(content)
+            
+            saved.append({
+                "filename": img.filename,
+                "path": save_path,
+                "size_bytes": len(content),
+            })
 
-    return {
-        "message": "Images uploaded successfully",
-        "count": len(saved),
-        "files": saved,
-    }
+        if not saved:
+            raise HTTPException(status_code=400, detail="No valid images were uploaded")
+
+        return {
+            "message": "Images uploaded successfully",
+            "count": len(saved),
+            "files": saved,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing images: {str(e)}")
 
 
 class AnalyzeRequest(BaseModel):
@@ -313,8 +343,13 @@ def predict(state: PatientState):
     if model is not None:
         sizes = predict_trajectory(model, start_size=start_size, months=12, lookback=3)
         evolution = []
-        for m, size in enumerate(sizes):
-            survival = 100 - m * 2 + (5 if treatment == "combined" else 0)
+        for m in range(1, 13):  # Months 1-12
+            idx = m - 1  # Index into sizes array (0-based)
+            if idx < len(sizes):
+                size = sizes[idx]
+            else:
+                size = start_size * np.exp(-0.15 * idx)
+            survival = 100 - (m - 1) * 2 + (5 if treatment == "combined" else 0)
             evolution.append({
                 "month": f"Month {m}",
                 "tumorSize": round(max(0.1, float(size)), 2),
@@ -323,9 +358,9 @@ def predict(state: PatientState):
     else:
         base_growth = -0.15 if treatment == "chemo" else (-0.12 if treatment == "radiation" else -0.18)
         evolution = []
-        for m in range(13):
-            size = start_size * np.exp(base_growth * m)
-            survival = 100 - m * 2 + (5 if treatment == "combined" else 0)
+        for m in range(1, 13):  # Months 1-12
+            size = start_size * np.exp(base_growth * (m - 1))
+            survival = 100 - (m - 1) * 2 + (5 if treatment == "combined" else 0)
             evolution.append({
                 "month": f"Month {m}",
                 "tumorSize": round(max(0.1, float(size)), 2),
